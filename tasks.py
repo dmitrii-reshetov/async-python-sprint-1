@@ -1,6 +1,6 @@
 import logging
-import multiprocessing
-import os
+from abc import ABC, abstractmethod
+import subprocess
 import sys
 import json
 import time
@@ -8,11 +8,11 @@ from copy import copy
 from datetime import datetime
 from pathlib import Path
 from queue import Empty
-from typing import Iterable
+from typing import Iterable, Optional, TypedDict
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 from threading import Event
-from multiprocessing import Pool, Queue
+from multiprocessing import Queue
 
 from utils import CITIES, get_url_by_city_name
 from external.client import YandexWeatherAPI
@@ -20,20 +20,17 @@ from external.client import YandexWeatherAPI
 PROJECT_ROOT_DIR = Path().absolute()
 DATA_DIR = PROJECT_ROOT_DIR / "data"
 LOGS_DIR = PROJECT_ROOT_DIR / "logs"
-DOWNLOADS_DIR = DATA_DIR / "downloads"
-ANALYZER_OUTPUT_DIR = DATA_DIR / "analyzer_output"
-ANALYZER_SCRIPT_PATH = PROJECT_ROOT_DIR / "external" / "analyzer.py"
+CALCULATOR_SCRIPT_PATH = PROJECT_ROOT_DIR / "external" / "analyzer.py"
 
 
 logging.basicConfig(level=logging.CRITICAL)
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
-format = '[%(asctime)s:%(name)s:%(levelname)s] %(message)s'
-
-formatter = logging.Formatter(format)
+log_format = '%(asctime)s|%(filename)s:%(lineno)d|' \
+             '%(processName)s:%(threadName)s|%(levelname)s|%(message)s'
+formatter = logging.Formatter(log_format)
 
 f_handler = logging.FileHandler(LOGS_DIR / 'main.log')
 f_handler.setFormatter(formatter)
@@ -46,134 +43,211 @@ s_handler.setLevel(logging.WARNING)
 logger.addHandler(f_handler)
 logger.addHandler(s_handler)
 
-class DataFetchingTask:
-    def __init__(
-            self,
-            input_queue: Queue,
-            output_queue: Queue,
-            output_dir: str | Path,
-            on_complete_event: Event,
-    ):
-        self.input_queue = input_queue
-        self.output_queue = output_queue
-        self.output_dir = Path(output_dir)
-        self.on_complete_event = on_complete_event
+
+class ExpectedException(ABC, Exception):
+    pass
 
 
-    def run(self):
-        with ThreadPoolExecutor() as pool:
-            while not self.input_queue.empty():
-                city_name = self.input_queue.get()
-                pool.submit(self._fetch_forcast_fo_city, city_name)
-        self.on_complete_event.set()
-        logger.debug("All forecasts have been fetched. ")
-
-    def _fetch_forcast_fo_city(self, city_name: str):
-        try:
-            forecast_url = get_url_by_city_name(city_name)
-        except KeyError:
-            logger.error(f"{city_name}: Forecast url not found.")
-            return
-
-        try:
-            forecast_data = YandexWeatherAPI.get_forecasting(forecast_url)
-        except Exception as e:
-            logger.error(
-                f"{city_name}: Error while forecast data fetching."
-                f" Forecast URL: {forecast_url}"
-                f" Details: {e}"
-            )
-            return
-        else:
-            file_path = self.output_dir / f"{city_name}.json"
-            with open(file_path, "w") as f:
-                json.dump(forecast_data, f, indent=4)
-
-            self.output_queue.put(file_path)
-            logger.debug(
-                f"{city_name}: forecast data was successfully fetched.")
+class DataFetchingException(ExpectedException):
+    pass
 
 
-class DataCalculationTask:
+class DataCalculationException(ExpectedException):
+    pass
+
+
+class DataAggregationException(ExpectedException):
+    pass
+
+
+class AbstractTask(ABC):
     def __init__(
         self,
-        analyzer_script_path: str | Path,
-        output_dir: str | Path,
         input_queue: Queue,
-        stop_calculation_event: Event,
-        on_complete_event: Event
+        on_input_complete_event: Event,
+        output_dir: Path,
+        output_queue: Optional[Queue] = None,
     ):
-        self._analyzer_script_path = Path(analyzer_script_path)
-        self.input_queue = input_queue
-        self.output_dir = Path(output_dir)
-        self._stop_calculation_event = stop_calculation_event
-        self.on_complete_event = on_complete_event
+        if output_queue is None:
+            output_queue = Queue()
 
-    def run(self):
-        with Pool(processes=multiprocessing.cpu_count() - 1) as pool:
+        self.input_queue = input_queue
+        self.on_input_complete_event = on_input_complete_event
+        self.output_queue = output_queue
+        self.output_dir = output_dir
+        self._on_complete_event = Event()
+
+    @property
+    def output_dir(self) -> Path:
+        return self._output_dir
+
+    @output_dir.setter
+    def output_dir(self, value: Path):
+        self._output_dir = value
+        self._output_dir.mkdir(parents=False, exist_ok=True)
+
+    @property
+    def on_complete_event(self) -> Event:
+        return self._on_complete_event
+
+    def __call__(self):
+        results = dict()
+        with ThreadPoolExecutor(
+                thread_name_prefix=self.__class__.__name__
+        ) as pool:
             while True:
                 try:
-                    forecast_file_path = self.input_queue.get(timeout=0.1)
+                    input_item = self.input_queue.get(timeout=0.3)
+                    results[input_item] = pool.submit(
+                        self._run, input_item
+                    )
                 except Empty:
-                    if self._stop_calculation_event.is_set():
+                    if self.on_input_complete_event.is_set():
                         break
                     else:
                         continue
 
-                forecast_file_name = forecast_file_path.name
-                command = '{python} {script} -i "{input}" -o "{output}"'.\
-                    format(
-                        python=sys.executable,
-                        script=self._analyzer_script_path,
-                        input=forecast_file_path,
-                        output=self.output_dir / forecast_file_name,
-                    )
+        self._after_threed_pool_exit(results)
 
-                pool.apply_async(os.system, [command])
-                logger.debug(
-                    f"Calculation of {forecast_file_path} "
-                    f"has been started asynchronously."
+    def _after_threed_pool_exit(self, results: dict[str, Future]):
+        self.on_input_complete_event.clear()
+        self._on_complete_event.set()
+        self._process_results(results)
+
+    @classmethod
+    def _process_results(cls, results: dict[str, Future]) -> list:
+        success_results = list()
+        for input_item, result in results.items():
+            try:
+                success_results.append(result.result())
+            except ExpectedException:
+                continue
+            except Exception:
+                logger.error(
+                    f"Unexpected error while running {cls.__name__}"
+                    f" for {input_item}.", exc_info=True
                 )
-        self.on_complete_event.set()
-        logger.debug("All data has been calculated.")
 
-
-class DataAggregationTask:
-
-    def __init__(self, input_dir: str | Path, output_dir: str | Path):
-        self._input_dir = Path(input_dir)
-        self._output_dir = Path(output_dir)
-
-    def run(self):
-        analyzed_data_dir = Path(self._input_dir)
-
-        with ThreadPoolExecutor() as pool:
-            file_paths = self._input_dir.glob("*")
-            items = pool.map(self._read_data, file_paths)
-
-        items = [item for item in items if item]
-
-        output_file_name = f"aggregated_{analyzed_data_dir.name}.json"
-        output_file_path = self._output_dir / output_file_name
-        with open(output_file_path, "w") as f:
-            json.dump(items, f, indent=4)
-
-        logger.debug(f"All data has ben aggregated: {output_file_path}")
-        return output_file_path
+        total_co = len(results)
+        success_co = len(success_results)
+        logger.info(
+            f"All input items have been processed by {cls.__name__}:"
+            f" total: {total_co}, success: {success_co},"
+            f" error: {total_co - success_co}."
+        )
+        return success_results
 
     @staticmethod
-    def _read_data(file_path: str | Path) -> dict | None:
-        file_path = Path(file_path)
-        city_name = file_path.stem
-        with open(file_path, "r") as f:
+    def _dump(data: dict | list[dict], file_path: Path):
+        with open(file_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+    @abstractmethod
+    def _run(self, input_item: str):
+        pass
+
+
+class DataFetchingTask(AbstractTask):
+    def _run(self, input_item: str) -> None:
+        city_name = input_item
+        try:
+            forecast_url = get_url_by_city_name(city_name)
+        except Exception as e:
+            err_message = f"{city_name}: Unable to get forecast url." \
+                          f" Details: {e}"
+            logger.error(err_message)
+            raise DataFetchingException(err_message) from e
+
+        try:
+            forecast_data = YandexWeatherAPI.get_forecasting(forecast_url)
+        except Exception as e:
+            err_message = f"{city_name}: Unable to get forecast" \
+                          f" by url: '{forecast_url}'. Details: {e}"
+            logger.error(err_message)
+            raise DataFetchingException(err_message) from e
+
+        file_path = self._output_dir / f"{city_name}.json"
+        self._dump(data=forecast_data, file_path=file_path)
+        self.output_queue.put(str(file_path))
+
+        logger.info(
+            f"{city_name}: forecast data was successfully fetched"
+            f" and saved as {file_path}"
+        )
+
+
+class DataCalculationTask(AbstractTask):
+    def _run(self, input_item: str):
+        forecast_file_path = Path(input_item)
+        forecast_file_name = forecast_file_path.name
+        output_file_path = self.output_dir / forecast_file_name
+        command = [
+            f"{sys.executable}",
+            f"{CALCULATOR_SCRIPT_PATH}",
+            "-i", f"{forecast_file_path}",
+            "-o", f"{output_file_path}",
+        ]
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        _, error = process.communicate()
+
+        error_message = error.decode().strip()
+        if error_message:
+            error_message = f"Unable to calculate data from forecast" \
+                            f" {forecast_file_path}. Details: {error_message}"
+            if any(ext in error_message for ext in ("ERROR", "CRITICAL")):
+                logger.error(error_message)
+                raise DataCalculationException(error_message)
+            else:
+                logger.warning(error_message)
+
+        self.output_queue.put(str(output_file_path))
+        logger.info(
+            f"{forecast_file_path}: forecast data was successfully calculated"
+            f" and saved as {output_file_path}"
+        )
+
+
+class AggregatedData(TypedDict):
+    city_name: str
+    temperature: dict[str, float | None]
+    precipitation_free_hours: dict[str, float | None]
+    avg_temperature: float | None
+    avg_precipitation_free_hours: float | None
+    rating: int | None
+
+
+class DataAggregationTask(AbstractTask):
+    DELIMITER = ";"
+
+    def _after_threed_pool_exit(self, results: dict[str, Future]):
+        self.on_input_complete_event.clear()
+        items = self._process_results(results)
+        items = sorted(items, key=lambda i: i["city_name"])
+
+        output_file_path = self.output_dir / "aggregated_data.json"
+        self._dump(data=items, file_path=output_file_path)
+        self.output_queue.put(str(output_file_path))
+        self._on_complete_event.set()
+
+    def _run(self, input_item: str) -> AggregatedData:
+        input_file_path = Path(input_item)
+        city_name = input_file_path.stem
+        with open(input_file_path, "r") as f:
             data = json.load(f)
 
         try:
             days = data["days"]
         except KeyError:
-            return None
+            err_message = f"{city_name}: There is no data to aggregate" \
+                          f" in {input_file_path}."
+            logger.error(err_message)
+            raise DataAggregationException(err_message)
 
-        result = dict(
+        result: AggregatedData = dict(
             city_name=city_name,
             temperature=dict(),
             precipitation_free_hours=dict(),
@@ -184,47 +258,74 @@ class DataAggregationTask:
 
         for day in days:
             date_object = datetime.strptime(day["date"], "%Y-%m-%d")
-            short_date: str = date_object.strftime("%d-%m")
+            short_date = date_object.strftime("%d-%m")
+
             result["temperature"][short_date] = day["temp_avg"]
+            if day["temp_avg"] is None:
+                logger.warning(
+                    f"{city_name}: The average temperature is not specified"
+                    f" on {short_date}."
+                )
+
             result["precipitation_free_hours"][short_date] = \
                 day["relevant_cond_hours"]
+            if day["relevant_cond_hours"] is None:
+                logger.warning(
+                    f"{city_name}: The number of precipitation-free hours"
+                    f" is not specified on {short_date}."
+                )
 
-        def avg(l: Iterable) -> float:
-            values = [val for val in l if val is not None]
+        def _avg(values: Iterable) -> float:
+            values = list(filter(lambda item: item is not None, values))
+            if len(values) == 0:
+                raise AttributeError("There is no one not None value.")
             return sum(values) / len(values)
 
-        result["avg_temperature"] = avg(result["temperature"].values())
-        result["avg_precipitation_free_hours"] = \
-            avg(result["precipitation_free_hours"].values())
+        try:
+            result["avg_temperature"] = _avg(result["temperature"].values())
+        except AttributeError as e:
+            logger.warning(
+                f"{city_name}: Unable to calculate average temperature."
+                f" Details: {e}"
+            )
+
+        try:
+            result["avg_precipitation_free_hours"] = _avg(
+                result["precipitation_free_hours"].values()
+            )
+        except AttributeError as e:
+            logger.warning(
+                f"{city_name}: Unable to calculate average number of"
+                f" precipitation-free hours. Details: {e}"
+            )
+
         return result
 
 
-class DataAnalyzingTask:
-    def __init__(self, input_file_path: str | Path):
-        self.input_file_path = input_file_path
-
-    def run(self) -> list[dict]:
-        with open(self.input_file_path, "r") as input_file:
+class DataAnalyzingTask(AbstractTask):
+    def _run(self, input_item: str):
+        input_file_path = Path(input_item)
+        with open(input_file_path, "r") as input_file:
             items = json.load(input_file)
 
         rating_by_city_name = self._calc_multiple_fild_rating(
             items=items,
             field_names=("avg_temperature", "avg_precipitation_free_hours")
         )
-        #Utils.print_result(items)
-        result_items = list()
+
         for item in items:
             city_rating = rating_by_city_name[item["city_name"]]
-            if city_rating == 1:
-                item["rating"] = city_rating
-                result_items.append(item)
+            item["rating"] = city_rating
 
-        return result_items
+        items = sorted(items, key=lambda i: i["city_name"])
+        output_file_path = self.output_dir / "analyzed_data.json"
+        self._dump(data=items, file_path=output_file_path)
+        self.output_queue.put(str(output_file_path))
 
     def _calc_multiple_fild_rating(
             self,
             items: list[dict],
-            field_names: list[str]
+            field_names: Iterable[str]
     ) -> dict:
         ratings = dict()
         for field_name in field_names:
@@ -233,7 +334,7 @@ class DataAnalyzingTask:
                 field_name=field_name
             )
 
-        counter = Counter()
+        counter: Counter = Counter()
         for d in ratings.values():
             counter.update(d)
 
@@ -266,9 +367,12 @@ class DataAnalyzingTask:
 
         return rating
 
+
 class Utils:
     @staticmethod
-    def mk_dir(parent_dir: Path, dir_name: str, add_timestamp: bool=True) -> Path:
+    def mk_dir(
+        parent_dir: Path, dir_name: str, add_timestamp: bool = True
+    ) -> Path:
         if add_timestamp:
             timestamp = int(time.mktime(datetime.today().timetuple()))
             dir_name += f"_{timestamp}"
@@ -301,11 +405,17 @@ class Utils:
 
         result = ru_name_by_eng.get(eng_city_name.upper(), eng_city_name)
         if result == eng_city_name:
-            logger.warning(f'Russian translation not found for "{eng_city_name}"')
+            logger.warning(
+                f'Russian translation not found for "{eng_city_name}"'
+            )
 
         return result
+
     @classmethod
-    def print_result(cls, items: list[dict]):
+    def print_result(cls, items: list[AggregatedData]):
+        if not items:
+            return
+
         prepared_rows = list()
 
         def prepare_val(val: float | int | None) -> str:
@@ -329,62 +439,70 @@ class Utils:
                 prepare_val(item["avg_precipitation_free_hours"]),
                 "",
             ))
-        dates = item["temperature"].keys()
+
+        dates = items[0]["temperature"].keys()
         headers = (
             "Город/день", "", *dates, "Среднее", "Рейтинг"
         )
-        row_format = "{:<15} {:<25}" + " {:<8}"*len(dates) + " {:<10} {:<10}"
+        row_format = "{:<15} {:<25}" + " {:<8}" * len(dates) + " {:<10} {:<10}"
         print(row_format.format(*headers))
 
         for row in prepared_rows:
             print(row_format.format(*row))
 
 
-if __name__ == "__main__":
+def main(cities: dict[str, str]):
+    cities_queue: Queue = Queue()
+    for city_name in cities.keys():
+        cities_queue.put(city_name)
+    on_input_complete_event = Event()
+    on_input_complete_event.set()
 
-    with ThreadPoolExecutor() as th_pool:
-        cities_queue = Queue()
-        for city_name in CITIES.keys():
-            cities_queue.put(city_name)
+    output_dir = Utils.mk_dir(parent_dir=DATA_DIR, dir_name="output")
 
-        # Forecasts fetching
-        df_task = DataFetchingTask(
-            input_queue=cities_queue,
-            output_queue=Queue(),
-            on_complete_event=Event(),
-            output_dir=Utils.mk_dir(
-                parent_dir=DOWNLOADS_DIR,
-                dir_name="forecasts"
-            ),
-        )
-        th_pool.submit(df_task.run)
-
-        # Forecasts calculation
-        dc_task = DataCalculationTask(
-            analyzer_script_path=ANALYZER_SCRIPT_PATH,
-            input_queue=df_task.output_queue,
-            stop_calculation_event = df_task.on_complete_event,
-            on_complete_event = Event(),
-            output_dir = Utils.mk_dir(
-                parent_dir=ANALYZER_OUTPUT_DIR,
-                dir_name=df_task.output_dir.name,
-                add_timestamp=False
-            )
-        )
-        th_pool.submit(dc_task.run)
-
-
-        # Data aggregation
-        dag_task = DataAggregationTask(
-            input_dir=dc_task.output_dir,
-            output_dir=DOWNLOADS_DIR
-        )
-        dc_task.on_complete_event.wait()
-        aggregated_data_path = dag_task.run()
-
-    # Data analyzing
-    dan_task = DataAnalyzingTask(
-        input_file_path=aggregated_data_path,
+    tasks: list[AbstractTask] = list()
+    df_task = DataFetchingTask(
+        input_queue=cities_queue,
+        on_input_complete_event=on_input_complete_event,
+        output_dir=output_dir / "fetched_data",
     )
-    result = dan_task.run()
-    Utils.print_result(result)
+    tasks.append(df_task)
+
+    dc_task = DataCalculationTask(
+        input_queue=df_task.output_queue,
+        on_input_complete_event=df_task.on_complete_event,
+        output_dir=output_dir / "calculated_data"
+    )
+    tasks.append(dc_task)
+
+    dag_task = DataAggregationTask(
+        input_queue=dc_task.output_queue,
+        on_input_complete_event=dc_task.on_complete_event,
+        output_dir=output_dir
+    )
+    tasks.append(dag_task)
+
+    dan_task = DataAnalyzingTask(
+        input_queue=dag_task.output_queue,
+        on_input_complete_event=dag_task.on_complete_event,
+        output_dir=output_dir
+    )
+    tasks.append(dan_task)
+
+    results = dict()
+    with ThreadPoolExecutor(thread_name_prefix="MainPool") as th_pool:
+        for task in tasks:
+            results[task.__class__.__name__] = th_pool.submit(task)
+
+    dan_task.on_complete_event.wait()
+    analyzed_data_path = dan_task.output_queue.get()
+    with open(analyzed_data_path, "r") as f:
+        items = json.load(f)
+
+    top_rating_items = list(filter(lambda x: x["rating"] == 1, items))
+
+    Utils.print_result(top_rating_items)
+
+
+if __name__ == "__main__":
+    main(CITIES)

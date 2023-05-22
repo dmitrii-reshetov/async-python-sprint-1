@@ -1,0 +1,42 @@
+[
+    {
+        "city_name": "MOSCOW",
+        "temperature": {
+            "26-05": 17.727,
+            "27-05": 13.091,
+            "28-05": 12.182,
+            "29-05": 12.0,
+            "30-05": null
+        },
+        "precipitation_free_hours": {
+            "26-05": 7,
+            "27-05": 0,
+            "28-05": 0,
+            "29-05": 1,
+            "30-05": 0
+        },
+        "avg_temperature": 13.75,
+        "avg_precipitation_free_hours": 1.6,
+        "rating": null
+    },
+    {
+        "city_name": "PARIS",
+        "temperature": {
+            "26-05": 17.636,
+            "27-05": 17.364,
+            "28-05": 17.0,
+            "29-05": null,
+            "30-05": null
+        },
+        "precipitation_free_hours": {
+            "26-05": 9,
+            "27-05": 11,
+            "28-05": 11,
+            "29-05": 0,
+            "30-05": 0
+        },
+        "avg_temperature": 17.333333333333332,
+        "avg_precipitation_free_hours": 6.2,
+        "rating": null
+    }
+]

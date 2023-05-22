@@ -1,0 +1,44 @@
+{
+  "days": [
+    {
+      "date": "2022-05-26",
+      "hours_start": 9,
+      "hours_end": 19,
+      "hours_count": 11,
+      "temp_avg": 17.636,
+      "relevant_cond_hours": 9
+    },
+    {
+      "date": "2022-05-27",
+      "hours_start": 9,
+      "hours_end": 19,
+      "hours_count": 11,
+      "temp_avg": 17.364,
+      "relevant_cond_hours": 11
+    },
+    {
+      "date": "2022-05-28",
+      "hours_start": 9,
+      "hours_end": 19,
+      "hours_count": 11,
+      "temp_avg": 17.0,
+      "relevant_cond_hours": 11
+    },
+    {
+      "date": "2022-05-29",
+      "hours_start": null,
+      "hours_end": null,
+      "hours_count": 0,
+      "temp_avg": null,
+      "relevant_cond_hours": 0
+    },
+    {
+      "date": "2022-05-30",
+      "hours_start": null,
+      "hours_end": null,
+      "hours_count": 0,
+      "temp_avg": null,
+      "relevant_cond_hours": 0
+    }
+  ]
+}
