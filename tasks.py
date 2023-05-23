@@ -85,16 +85,23 @@ class AbstractTask(ABC):
                 continue
             except Exception:
                 logger.error(
-                    f"Unexpected error while running {cls.__name__}"
-                    f" for {input_item}.", exc_info=True
+                    f"Unexpected error while running %(task)s"
+                    f" for %(item)s.",
+                    {"task": cls.__name__, "item": input_item},
+                    exc_info=True
                 )
 
         total_co = len(results)
         success_co = len(success_results)
         logger.info(
-            f"All input items have been processed by {cls.__name__}:"
-            f" total: {total_co}, success: {success_co},"
-            f" error: {total_co - success_co}."
+            f"All input items have been processed by %(task)s:"
+            f" total: %(total)d, success: %(success)d, error: %(error)d.",
+            {
+                "task": cls.__name__,
+                "total": total_co,
+                "success": success_co,
+                "error": total_co-success_co
+            }
         )
         return success_results
 
@@ -132,8 +139,8 @@ class DataFetchingTask(AbstractTask):
         self.output_queue.put(str(file_path))
 
         logger.info(
-            f"{city_name}: forecast data was successfully fetched"
-            f" and saved as {file_path}"
+            f"%(city)s: forecast data was successfully fetched"
+            f" and saved as %(file)s", {"city": city_name, "file": file_path}
         )
 
 
@@ -167,8 +174,9 @@ class DataCalculationTask(AbstractTask):
 
         self.output_queue.put(str(output_file_path))
         logger.info(
-            f"{forecast_file_path}: forecast data was successfully calculated"
-            f" and saved as {output_file_path}"
+            f"%(forecast)s: forecast data was successfully calculated"
+            f" and saved as %(output)s",
+            {"forecast": forecast_file_path, "output": output_file_path}
         )
 
 
@@ -224,16 +232,18 @@ class DataAggregationTask(AbstractTask):
             result["temperature"][short_date] = day["temp_avg"]
             if day["temp_avg"] is None:
                 logger.warning(
-                    f"{city_name}: The average temperature is not specified"
-                    f" on {short_date}."
+                    f"%(city)s: The average temperature is not specified"
+                    f" on %(date)s.",
+                    {"city": city_name, "date": short_date}
                 )
 
             result["precipitation_free_hours"][short_date] = \
                 day["relevant_cond_hours"]
             if day["relevant_cond_hours"] is None:
                 logger.warning(
-                    f"{city_name}: The number of precipitation-free hours"
-                    f" is not specified on {short_date}."
+                    f"%(city)s: The number of precipitation-free hours"
+                    f" is not specified on %(date)s.",
+                    {"city": city_name, "date": short_date}
                 )
 
         def _avg(values: Iterable) -> float:
@@ -246,8 +256,8 @@ class DataAggregationTask(AbstractTask):
             result["avg_temperature"] = _avg(result["temperature"].values())
         except AttributeError as e:
             logger.warning(
-                f"{city_name}: Unable to calculate average temperature."
-                f" Details: {e}"
+                f"%(city)s: Unable to calculate average temperature."
+                f" Details: %(error)s", {"city": city_name, "error": str(e)}
             )
 
         try:
@@ -256,8 +266,9 @@ class DataAggregationTask(AbstractTask):
             )
         except AttributeError as e:
             logger.warning(
-                f"{city_name}: Unable to calculate average number of"
-                f" precipitation-free hours. Details: {e}"
+                f"%(city)s: Unable to calculate average number of"
+                f" precipitation-free hours. Details: %(error)s",
+                {"city": city_name, "error": str(e)}
             )
 
         return result
@@ -367,7 +378,7 @@ class Utils:
         result = ru_name_by_eng.get(eng_city_name.upper(), eng_city_name)
         if result == eng_city_name:
             logger.warning(
-                f'Russian translation not found for "{eng_city_name}"'
+                f'Russian translation not found for "%s"', eng_city_name
             )
 
         return result
