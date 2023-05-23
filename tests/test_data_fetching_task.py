@@ -1,13 +1,12 @@
 import json
-from unittest import mock
-from pathlib import Path
 from multiprocessing import Queue
+from pathlib import Path
+from unittest import mock
 
 import pytest
 
 import utils
 from tasks import DataFetchingTask
-
 
 CITY_404 = {
     "GIZA": "https://code.s3.yandex.net/async-module/giza-response.json",

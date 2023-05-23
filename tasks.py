@@ -1,28 +1,24 @@
-from abc import ABC, abstractmethod
+import json
 import subprocess
 import sys
-import json
 import time
+from abc import ABC, abstractmethod
+from collections import Counter
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import copy
 from datetime import datetime
+from multiprocessing import Queue
 from pathlib import Path
 from queue import Empty
-from typing import Iterable, Optional, TypedDict
-from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, Future
 from threading import Event
-from multiprocessing import Queue
+from typing import Iterable, Optional, TypedDict
 
-from utils import CITIES, get_url_by_city_name
+from exceptions import (DataAggregationException, DataCalculationException,
+                        DataFetchingException, ExpectedException)
 from external.client import YandexWeatherAPI
 from logger import logger
-from exceptions import (
-    ExpectedException,
-    DataFetchingException,
-    DataCalculationException,
-    DataAggregationException
-)
-from settings import DATA_DIR, CALCULATOR_SCRIPT_PATH
+from settings import CALCULATOR_SCRIPT_PATH, DATA_DIR
+from utils import CITIES, get_url_by_city_name
 
 
 class AbstractTask(ABC):

@@ -1,6 +1,7 @@
-import pytest
 import json
 from pathlib import Path
+
+import pytest
 
 from tests.utils import PreparedTask, read_queue_content
 

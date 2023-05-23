@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from functools import reduce
 from operator import getitem
-from typing import Optional, List, Dict
+from typing import Dict, List, Optional
 
 PATH_FROM_INPUT = "./../examples/response.json"
 PATH_TO_OUTPUT = "./../examples/output.json"

@@ -1,8 +1,8 @@
-from multiprocessing import Queue, Event
+from multiprocessing import Event, Queue
 
 import pytest
 
-from tests.utils import PreparedTask, DummyTask
+from tests.utils import DummyTask, PreparedTask
 
 
 @pytest.fixture(scope="function")

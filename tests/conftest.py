@@ -1,17 +1,13 @@
 import json
-from unittest import mock
-from typing import Callable
-from pathlib import Path
 from multiprocessing import Event, Queue
+from pathlib import Path
+from typing import Callable
+from unittest import mock
 
 import pytest
 
-from tasks import (
-    DataFetchingTask,
-    DataCalculationTask,
-    DataAggregationTask,
-    DataAnalyzingTask,
-)
+from tasks import (DataAggregationTask, DataAnalyzingTask, DataCalculationTask,
+                   DataFetchingTask)
 from tests.utils import DummyTask, PreparedTask
 
 CITIES = {

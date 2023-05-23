@@ -1,4 +1,3 @@
-
 from multiprocessing import Queue
 
 import pytest

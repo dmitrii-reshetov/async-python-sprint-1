@@ -1,6 +1,6 @@
 import logging
-from settings import LOGS_DIR
 
+from settings import LOGS_DIR
 
 logging.basicConfig(level=logging.CRITICAL)
 logger = logging.getLogger(__name__)
