@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 import subprocess
 import sys
@@ -16,48 +15,14 @@ from multiprocessing import Queue
 
 from utils import CITIES, get_url_by_city_name
 from external.client import YandexWeatherAPI
-
-PROJECT_ROOT_DIR = Path().absolute()
-DATA_DIR = PROJECT_ROOT_DIR / "data"
-LOGS_DIR = PROJECT_ROOT_DIR / "logs"
-CALCULATOR_SCRIPT_PATH = PROJECT_ROOT_DIR / "external" / "analyzer.py"
-
-
-logging.basicConfig(level=logging.CRITICAL)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-logger.propagate = False
-
-log_format = '%(asctime)s|%(filename)s:%(lineno)d|' \
-             '%(processName)s:%(threadName)s|%(levelname)s|%(message)s'
-formatter = logging.Formatter(log_format)
-
-f_handler = logging.FileHandler(LOGS_DIR / 'main.log')
-f_handler.setFormatter(formatter)
-f_handler.setLevel(logging.DEBUG)
-
-s_handler = logging.StreamHandler()
-s_handler.setFormatter(formatter)
-s_handler.setLevel(logging.WARNING)
-
-logger.addHandler(f_handler)
-logger.addHandler(s_handler)
-
-
-class ExpectedException(ABC, Exception):
-    pass
-
-
-class DataFetchingException(ExpectedException):
-    pass
-
-
-class DataCalculationException(ExpectedException):
-    pass
-
-
-class DataAggregationException(ExpectedException):
-    pass
+from logger import logger
+from exceptions import (
+    ExpectedException,
+    DataFetchingException,
+    DataCalculationException,
+    DataAggregationException
+)
+from settings import DATA_DIR, CALCULATOR_SCRIPT_PATH
 
 
 class AbstractTask(ABC):
