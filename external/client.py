@@ -8,12 +8,15 @@ ERR_MESSAGE_TEMPLATE = "Unexpected error: {error}"
 
 logger = logging.getLogger()
 
+class YandexWeatherAPIError(Exception):
+    pass
+
 
 class YandexWeatherAPI:
     """
     Base class for requests
     """
-
+    @staticmethod
     def __do_req(url: str) -> str:
         """Base request method"""
         try:
@@ -21,7 +24,7 @@ class YandexWeatherAPI:
                 resp_body = response.read().decode("utf-8")
                 data = json.loads(resp_body)
             if response.status != HTTPStatus.OK:
-                raise Exception(
+                raise YandexWeatherAPIError(
                     "Error during execute request. {}: {}".format(
                         resp_body.status, resp_body.reason
                     )
@@ -29,7 +32,7 @@ class YandexWeatherAPI:
             return data
         except Exception as ex:
             logger.error(ex)
-            raise Exception(ERR_MESSAGE_TEMPLATE.format(error=ex))
+            raise YandexWeatherAPIError(ERR_MESSAGE_TEMPLATE.format(error=ex))
 
     @staticmethod
     def get_forecasting(url: str):
