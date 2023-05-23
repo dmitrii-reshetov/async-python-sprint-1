@@ -8,4 +8,5 @@ __pycache__/
 data/*
 logs/*
 tmp/*
+!*.gitkeep
 
