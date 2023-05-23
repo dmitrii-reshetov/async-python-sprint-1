@@ -31,7 +31,7 @@ class YandexWeatherAPI:
                 )
             return data
         except Exception as ex:
-            logger.error(ex)
+            logger.exception(ex)
             raise YandexWeatherAPIError(ERR_MESSAGE_TEMPLATE.format(error=ex))
 
     @staticmethod
